@@ -4,8 +4,8 @@ const customStyles = `
 
 #webview-window {
   border: var(--dnd5e-border-gold);
-  background: url(systems/dnd5e/ui/texture-gray1.webp) no-repeat top left, 
-              url(systems/dnd5e/ui/texture-gray2.webp) no-repeat bottom right, 
+  background: url(systems/dnd5e/ui/texture-gray1.webp) no-repeat top left,
+              url(systems/dnd5e/ui/texture-gray2.webp) no-repeat bottom right,
               var(--dnd5e-color-parchment);
 }
 
@@ -35,8 +35,6 @@ const customStyles = `
   text-align: center;
   size: 4rem;
 }
-
-
 `;
 
 // Classe de la fenêtre WebView
@@ -52,6 +50,7 @@ class WebViewWindow extends Application {
       height: 600, // Hauteur de la fenêtre
       title: 'Aide de jeu D&D 2024', // Titre de la fenêtre
       template: '', // Pas de template spécifique
+      resizable: true, // Permettre le redimensionnement
     });
   }
 
@@ -59,10 +58,10 @@ class WebViewWindow extends Application {
   async _renderInner() {
     const content = `
       <div style="width: 100%; height: 100%;">
-        <iframe 
-          src="https://padhiver.github.io/" 
-          width="100%" 
-          height="100%" 
+        <iframe
+          src="https://padhiver.github.io/"
+          width="100%"
+          height="100%"
           style="border: none;">
         </iframe>
       </div>
