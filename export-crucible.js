@@ -9,7 +9,7 @@
  */
 
 (async () => {
-    
+
     // =================================================================
     // CONFIGURATION : Définissez vos structures complexes ici
     // =================================================================
@@ -27,8 +27,8 @@
             }
         ],
 
-              /**
-         * Configuration pour les sorts (spells)
+        /**
+         * Configuration pour les sorts
          */
         "spell": [
             {
@@ -39,7 +39,33 @@
                 idKey: "id"
             }
         ],
-        
+
+        /**
+         * Configuration pour les JournalEntry
+         */
+        "JournalEntry": [
+            {
+                field: "categories",
+                path: "categories",
+                converter: "categories_converter",
+                subFields: ["name"],
+                idKey: "_id"
+            }
+        ],
+
+        /**
+         * Configuration pour les equipments
+         */
+        "consumable": [
+            {
+                field: "actions",
+                path: "system.actions",
+                converter: "actions_converter",
+                subFields: ["name", "description"],
+                idKey: "id"
+            }
+        ],
+
         /**
          * Configuration par défaut
          */
@@ -53,7 +79,7 @@
 
         constructor(options = {}) {
             super(options);
-            this.packs = game.packs.filter(p => 
+            this.packs = game.packs.filter(p =>
                 ["Item", "Actor", "JournalEntry"].includes(p.metadata.type)
             );
         }
@@ -90,7 +116,7 @@
                     const firstDoc = p.index.values().next().value;
                     if (firstDoc?.type) itemType = firstDoc.type;
                 }
-                
+
                 return {
                     value: p.metadata.id,
                     label: `${p.metadata.label} (${p.metadata.id})`,
@@ -116,9 +142,9 @@
                         <div class="form-group" style="margin-bottom: 0.5rem;">
                             <label for="compendium-select" style="font-weight: bold;">Sélectionnez un compendium :</label>
                             <select id="compendium-select" name="compendium" style="width: 100%; padding: 0.5rem;">
-                                ${context.compendiums.map(c => 
-                                    `<option value="${c.value}">${c.label}</option>`
-                                ).join('')}
+                                ${context.compendiums.map(c =>
+                `<option value="${c.value}">${c.label}</option>`
+            ).join('')}
                             </select>
                         </div>
                     </section>
@@ -141,37 +167,37 @@
                     </button>
                 </div>
             `;
-            
-            return { 
+
+            return {
                 form: html,
-                exportConfig: context.exportConfig 
+                exportConfig: context.exportConfig
             };
         }
 
         _replaceHTML(result, content, options) {
             content.innerHTML = result.form;
-            
+
             const select = content.querySelector('#compendium-select');
             const configSection = content.querySelector('#config-display');
-            
+
             if (select && configSection) {
                 const updateConfig = () => {
                     const selectedOption = select.options[select.selectedIndex];
                     const packId = selectedOption.value;
                     const pack = game.packs.get(packId);
-                    
+
                     if (!pack) return;
-                    
+
                     let itemType = pack.metadata.type;
                     if (pack.metadata.type === "Item" && pack.index.size > 0) {
                         const firstDoc = pack.index.values().next().value;
                         if (firstDoc?.type) itemType = firstDoc.type;
                     }
-                    
+
                     const config = result.exportConfig[itemType] || result.exportConfig["default"];
-                    
+
                     if (config.length > 0) {
-                        const details = config.map(c => 
+                        const details = config.map(c =>
                             `<li><code>${c.field}</code> via le converter <code>${c.converter}</code> (champs: ${c.subFields.join(', ')})</li>`
                         ).join('');
                         configSection.innerHTML = `
@@ -189,7 +215,7 @@
                         `;
                     }
                 };
-                
+
                 updateConfig();
                 select.addEventListener('change', updateConfig);
             }
@@ -227,34 +253,39 @@
 
             const entriesData = {};
             const foldersData = {};
-            
+
             const itemType = pack.metadata.type === "Item" ? documents[0]?.type : pack.metadata.type;
             const config = EXPORT_CONFIG[itemType] || EXPORT_CONFIG["default"];
 
             // Traiter chaque document
             for (const doc of documents) {
                 const originalName = doc.name;
-                
+                const docData = doc.toObject();
+
                 const itemTranslation = {
-                    "name": originalName,
-                    "description": foundry.utils.getProperty(doc, "system.description") || ""
+                    "name": originalName
                 };
+
+                // Ajouter description seulement si ce n'est pas un JournalEntry
+                if (pack.metadata.type !== "JournalEntry") {
+                    itemTranslation["description"] = foundry.utils.getProperty(docData, "system.description") || "";
+                }
 
                 // Traiter les structures complexes
                 for (const conf of config) {
-                    const array = foundry.utils.getProperty(doc, conf.path);
+                    const array = foundry.utils.getProperty(docData, conf.path);
 
                     if (Array.isArray(array) && array.length > 0) {
                         const nestedObject = {};
-                        
+
                         for (const element of array) {
                             const id = element[conf.idKey || "id"];
                             if (!id) continue;
 
                             const elementTranslation = {};
                             for (const subField of conf.subFields) {
-                                const value = element[subField];
-                                if (value && value.trim() !== "") {
+                                const value = foundry.utils.getProperty(element, subField);
+                                if (value && (typeof value === 'string' && value.trim() !== "")) {
                                     elementTranslation[subField] = value;
                                 }
                             }
@@ -262,22 +293,49 @@
                                 nestedObject[id] = elementTranslation;
                             }
                         }
-                        
+
                         if (Object.keys(nestedObject).length > 0) {
                             itemTranslation[conf.field] = nestedObject;
                         }
                     }
                 }
 
+                // Traitement spécial pour les pages des JournalEntry
+                if (pack.metadata.type === "JournalEntry" && doc.pages) {
+                    const pagesData = {};
+
+                    for (const page of doc.pages) {
+                        const pageTranslation = {
+                            "name": page.name
+                        };
+
+                        // Ajouter le contenu texte si disponible
+                        if (page.text?.content) {
+                            pageTranslation["text"] = page.text.content;
+                        }
+
+                        pagesData[page.name] = pageTranslation;
+                    }
+
+                    if (Object.keys(pagesData).length > 0) {
+                        itemTranslation["pages"] = pagesData;
+                    }
+                }
+
                 entriesData[originalName] = itemTranslation;
-                
+
                 if (doc.folder) {
                     foldersData[doc.folder.name] = doc.folder.name;
                 }
             }
-            
+
             // Créer le mapping
-            const mapping = { "description": "system.description" };
+            const mapping = {};
+
+            // Ajouter description seulement si ce n'est pas un JournalEntry
+            if (pack.metadata.type !== "JournalEntry") {
+                mapping["description"] = "system.description";
+            }
 
             for (const conf of config) {
                 mapping[conf.field] = {
@@ -296,9 +354,9 @@
             // Export du JSON
             const jsonContent = JSON.stringify(finalExport, null, 2);
             const fileName = `${pack.metadata.id}.json`;
-            
+
             saveDataToFile(jsonContent, "application/json", fileName);
-            
+
             ui.notifications.info(`✅ Export JSON réussi : ${fileName}`);
 
             // Générer le converter si nécessaire
@@ -326,16 +384,16 @@
                 converterCode += `            const translation = translations[item.${idKey}];\n`;
                 converterCode += `            \n`;
                 converterCode += `            if (translation) {\n`;
-                
+
                 for (const subField of conf.subFields) {
                     converterCode += `                if (translation.${subField}) item.${subField} = translation.${subField};\n`;
                 }
-                
+
                 converterCode += `            }\n`;
                 converterCode += `            return item;\n`;
                 converterCode += `        });\n`;
                 converterCode += `    }`;
-                
+
                 // Ajouter une virgule si ce n'est pas le dernier
                 if (config.indexOf(conf) < config.length - 1) {
                     converterCode += `,\n\n`;
