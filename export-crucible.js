@@ -1,11 +1,8 @@
 /**
- * BABELE CONVERTER EXPORTER (ApplicationV2)
+ * BABELE CONVERTER EXPORTER (ApplicationV2) - VERSION CORRIGÉE
  * 
- * Script pour exporter des compendiums au format Babele avec support
- * des structures complexes (converters pour objets imbriqués).
- * 
- * PERSONNALISATION :
- * Modifiez EXPORT_CONFIG pour ajouter de nouveaux types d'objets.
+ * Correction : Export de TOUS les dossiers, même ceux qui ne contiennent
+ * que d'autres dossiers (pas de documents directs).
  */
 
 (async () => {
@@ -257,6 +254,32 @@
             const itemType = pack.metadata.type === "Item" ? documents[0]?.type : pack.metadata.type;
             const config = EXPORT_CONFIG[itemType] || EXPORT_CONFIG["default"];
 
+            // ===================================================
+            // CORRECTION : Collecter TOUS les dossiers du pack
+            // ===================================================
+            const collectAllFolders = (folder) => {
+                if (!folder) return;
+                
+                // Ajouter ce dossier
+                foldersData[folder.name] = folder.name;
+                
+                // Parcourir récursivement les sous-dossiers
+                if (folder.children) {
+                    for (const child of folder.children) {
+                        if (child.folder) {
+                            collectAllFolders(child.folder);
+                        }
+                    }
+                }
+            };
+
+            // Parcourir tous les dossiers racine du pack
+            if (pack.folders) {
+                for (const folder of pack.folders) {
+                    collectAllFolders(folder);
+                }
+            }
+
             // Traiter chaque document
             for (const doc of documents) {
                 const originalName = doc.name;
@@ -323,10 +346,6 @@
                 }
 
                 entriesData[originalName] = itemTranslation;
-
-                if (doc.folder) {
-                    foldersData[doc.folder.name] = doc.folder.name;
-                }
             }
 
             // Créer le mapping
@@ -357,7 +376,7 @@
 
             saveDataToFile(jsonContent, "application/json", fileName);
 
-            ui.notifications.info(`✅ Export JSON réussi : ${fileName}`);
+            ui.notifications.info(`✅ Export JSON réussi : ${fileName} (${Object.keys(foldersData).length} dossiers exportés)`);
 
             // Générer le converter si nécessaire
             if (config.length > 0) {
