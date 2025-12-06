@@ -1,8 +1,10 @@
 /**
- * BABELE CONVERTER EXPORTER (ApplicationV2) - VERSION CORRIGÉE
+ * BABELE CONVERTER EXPORTER (ApplicationV2) - VERSION 5
  * 
- * Correction : Export de TOUS les dossiers, même ceux qui ne contiennent
- * que d'autres dossiers (pas de documents directs).
+ * Version simplifiée qui suit la logique native de Babele :
+ * - Pas de converters pour la navigation hiérarchique standard
+ * - Converters uniquement pour les structures complexes (system.actions)
+ * - Export complet des Adventures avec toute leur hiérarchie
  */
 
 (async () => {
@@ -64,6 +66,22 @@
         ],
 
         /**
+         * Configuration pour les Adventures
+         * Note: Babele gère nativement la hiérarchie des Adventures,
+         * seuls les actions des items nécessitent un converter
+         */
+        "Adventure": [
+            {
+                field: "actions",
+                path: "system.actions",
+                converter: "actions_converter",
+                subFields: ["name", "description", "condition"],
+                idKey: "id",
+                isItemAction: true  // Flag pour indiquer que c'est dans les items
+            }
+        ],
+
+        /**
          * Configuration par défaut
          */
         "default": []
@@ -77,7 +95,7 @@
         constructor(options = {}) {
             super(options);
             this.packs = game.packs.filter(p =>
-                ["Item", "Actor", "JournalEntry"].includes(p.metadata.type)
+                ["Item", "Actor", "JournalEntry", "Adventure"].includes(p.metadata.type)
             );
         }
 
@@ -207,7 +225,7 @@
                         configSection.innerHTML = `
                             <p style="font-size: 0.9em; margin: 0; font-style: italic;">
                                 Aucune structure complexe configurée pour le type <code>${itemType}</code>. 
-                                Seuls les champs simples (nom, description) seront exportés.
+                                ${itemType === 'Adventure' ? 'La hiérarchie complète (actors, items, journals, scenes, macros) sera exportée nativement.' : 'Seuls les champs simples (nom, description) seront exportés.'}
                             </p>
                         `;
                     }
@@ -280,87 +298,270 @@
                 }
             }
 
-            // Traiter chaque document
-            for (const doc of documents) {
-                const originalName = doc.name;
-                const docData = doc.toObject();
+            // ===================================================
+            // Traitement spécial pour les ADVENTURES
+            // ===================================================
+            if (pack.metadata.type === "Adventure") {
+                for (const doc of documents) {
+                    const adventureTranslation = {
+                        "name": doc.name
+                    };
 
-                const itemTranslation = {
-                    "name": originalName
-                };
+                    // Caption et description (seulement si non vides)
+                    if (doc.caption?.trim()) adventureTranslation["caption"] = doc.caption;
+                    if (doc.description?.trim()) adventureTranslation["description"] = doc.description;
 
-                // Ajouter description seulement si ce n'est pas un JournalEntry
-                if (pack.metadata.type !== "JournalEntry") {
-                    itemTranslation["description"] = foundry.utils.getProperty(docData, "system.description") || "";
-                }
+                    // Scenes
+                    if (doc.scenes?.size > 0) {
+                        const scenesData = {};
+                        for (const scene of doc.scenes) {
+                            scenesData[scene.name] = { "name": scene.name };
+                        }
+                        adventureTranslation["scenes"] = scenesData;
+                    }
 
-                // Traiter les structures complexes
-                for (const conf of config) {
-                    const array = foundry.utils.getProperty(docData, conf.path);
+                    // Macros
+                    if (doc.macros?.size > 0) {
+                        const macrosData = {};
+                        for (const macro of doc.macros) {
+                            macrosData[macro.name] = {
+                                "name": macro.name,
+                                "command": macro.command
+                            };
+                        }
+                        adventureTranslation["macros"] = macrosData;
+                    }
 
-                    if (Array.isArray(array) && array.length > 0) {
-                        const nestedObject = {};
+                    // Actors (avec leurs items et actions)
+                    if (doc.actors?.size > 0) {
+                        const actorsData = {};
+                        for (const actor of doc.actors) {
+                            const actorTranslation = {
+                                "name": actor.name,
+                                "tokenName": actor.prototypeToken?.name || actor.name
+                            };
 
-                        for (const element of array) {
-                            const id = element[conf.idKey || "id"];
-                            if (!id) continue;
+                            // Items de l'acteur
+                            if (actor.items?.size > 0) {
+                                const itemsData = {};
+                                for (const item of actor.items) {
+                                    const itemTranslation = { "name": item.name };
 
-                            const elementTranslation = {};
-                            for (const subField of conf.subFields) {
-                                const value = foundry.utils.getProperty(element, subField);
-                                if (value && (typeof value === 'string' && value.trim() !== "")) {
-                                    elementTranslation[subField] = value;
+                                    // Description de l'item (pour les talents notamment)
+                                    if (item.system?.description) {
+                                        // Si c'est un objet avec public/private
+                                        if (typeof item.system.description === 'object') {
+                                            const descObj = {};
+                                            if (item.system.description.public?.trim()) {
+                                                descObj.public = item.system.description.public;
+                                            }
+                                            if (item.system.description.private?.trim()) {
+                                                descObj.private = item.system.description.private;
+                                            }
+                                            if (Object.keys(descObj).length > 0) {
+                                                itemTranslation["description"] = descObj;
+                                            }
+                                        } 
+                                        // Si c'est une string simple
+                                        else if (typeof item.system.description === 'string' && item.system.description.trim()) {
+                                            itemTranslation["description"] = item.system.description;
+                                        }
+                                    }
+
+                                    // Actions de l'item
+                                    const actions = item.system?.actions;
+                                    if (Array.isArray(actions) && actions.length > 0) {
+                                        const actionsData = {};
+                                        for (const action of actions) {
+                                            if (!action.id) continue;
+                                            
+                                            const actionTranslation = {};
+                                            if (action.name?.trim()) actionTranslation["name"] = action.name;
+                                            if (action.description?.trim()) actionTranslation["description"] = action.description;
+                                            if (action.condition?.trim()) actionTranslation["condition"] = action.condition;
+                                            
+                                            // Exporter les effets de l'action
+                                            if (Array.isArray(action.effects) && action.effects.length > 0) {
+                                                const effectsData = [];
+                                                for (const effect of action.effects) {
+                                                    const effectTranslation = {};
+                                                    if (effect.name?.trim()) effectTranslation["name"] = effect.name;
+                                                    if (Object.keys(effectTranslation).length > 0) {
+                                                        effectsData.push(effectTranslation);
+                                                    }
+                                                }
+                                                if (effectsData.length > 0) {
+                                                    actionTranslation["effects"] = effectsData;
+                                                }
+                                            }
+                                            
+                                            if (Object.keys(actionTranslation).length > 0) {
+                                                actionsData[action.id] = actionTranslation;
+                                            }
+                                        }
+                                        if (Object.keys(actionsData).length > 0) {
+                                            itemTranslation["actions"] = actionsData;
+                                        }
+                                    }
+
+                                    itemsData[item.name] = itemTranslation;
+                                }
+                                if (Object.keys(itemsData).length > 0) {
+                                    actorTranslation["items"] = itemsData;
                                 }
                             }
-                            if (Object.keys(elementTranslation).length > 0) {
-                                nestedObject[id] = elementTranslation;
+
+                            actorsData[actor.name] = actorTranslation;
+                        }
+                        adventureTranslation["actors"] = actorsData;
+                    }
+
+                    // Folders de l'adventure
+                    if (doc.folders?.size > 0) {
+                        const adventureFoldersData = {};
+                        for (const folder of doc.folders) {
+                            adventureFoldersData[folder.name] = folder.name;
+                        }
+                        adventureTranslation["folders"] = adventureFoldersData;
+                    }
+
+                    // Journals (avec leurs pages)
+                    if (doc.journal?.size > 0) {
+                        const journalsData = {};
+                        for (const journal of doc.journal) {
+                            const journalTranslation = { "name": journal.name };
+
+                            // Pages du journal
+                            if (journal.pages?.size > 0) {
+                                const pagesData = {};
+                                for (const page of journal.pages) {
+                                    const pageTranslation = { "name": page.name };
+                                    if (page.text?.content?.trim()) {
+                                        pageTranslation["text"] = page.text.content;
+                                    }
+                                    pagesData[page.name] = pageTranslation;
+                                }
+                                if (Object.keys(pagesData).length > 0) {
+                                    journalTranslation["pages"] = pagesData;
+                                }
+                            }
+
+                            journalsData[journal.name] = journalTranslation;
+                        }
+                        adventureTranslation["journals"] = journalsData;
+                    }
+
+                    entriesData[doc.name] = adventureTranslation;
+                }
+            } 
+            // ===================================================
+            // Traitement STANDARD pour les autres types
+            // ===================================================
+            else {
+                for (const doc of documents) {
+                    const originalName = doc.name;
+                    const docData = doc.toObject();
+
+                    const itemTranslation = {
+                        "name": originalName
+                    };
+
+                    // Ajouter description seulement si ce n'est pas un JournalEntry
+                    if (pack.metadata.type !== "JournalEntry") {
+                        const desc = foundry.utils.getProperty(docData, "system.description");
+                        if (desc) {
+                            // Si c'est un objet avec public/private
+                            if (typeof desc === 'object' && !Array.isArray(desc)) {
+                                const descObj = {};
+                                if (desc.public?.trim()) descObj.public = desc.public;
+                                if (desc.private?.trim()) descObj.private = desc.private;
+                                if (Object.keys(descObj).length > 0) {
+                                    itemTranslation["description"] = descObj;
+                                }
+                            } 
+                            // Si c'est une string simple
+                            else if (typeof desc === 'string' && desc.trim()) {
+                                itemTranslation["description"] = desc;
                             }
                         }
+                    }
 
-                        if (Object.keys(nestedObject).length > 0) {
-                            itemTranslation[conf.field] = nestedObject;
+                    // Traiter les structures complexes (actions, etc.)
+                    for (const conf of config) {
+                        const array = foundry.utils.getProperty(docData, conf.path);
+
+                        if (Array.isArray(array) && array.length > 0) {
+                            const nestedObject = {};
+
+                            for (const element of array) {
+                                const id = element[conf.idKey || "id"];
+                                if (!id) continue;
+
+                                const elementTranslation = {};
+                                for (const subField of conf.subFields) {
+                                    const value = foundry.utils.getProperty(element, subField);
+                                    if (value && typeof value === 'string' && value.trim() !== "") {
+                                        elementTranslation[subField] = value;
+                                    }
+                                }
+                                if (Object.keys(elementTranslation).length > 0) {
+                                    nestedObject[id] = elementTranslation;
+                                }
+                            }
+
+                            if (Object.keys(nestedObject).length > 0) {
+                                itemTranslation[conf.field] = nestedObject;
+                            }
                         }
                     }
-                }
 
-                // Traitement spécial pour les pages des JournalEntry
-                if (pack.metadata.type === "JournalEntry" && doc.pages) {
-                    const pagesData = {};
+                    // Traitement spécial pour les pages des JournalEntry
+                    if (pack.metadata.type === "JournalEntry" && doc.pages) {
+                        const pagesData = {};
 
-                    for (const page of doc.pages) {
-                        const pageTranslation = {
-                            "name": page.name
-                        };
+                        for (const page of doc.pages) {
+                            const pageTranslation = {
+                                "name": page.name
+                            };
 
-                        // Ajouter le contenu texte si disponible
-                        if (page.text?.content) {
-                            pageTranslation["text"] = page.text.content;
+                            // Ajouter le contenu texte si disponible
+                            if (page.text?.content?.trim()) {
+                                pageTranslation["text"] = page.text.content;
+                            }
+
+                            pagesData[page.name] = pageTranslation;
                         }
 
-                        pagesData[page.name] = pageTranslation;
+                        if (Object.keys(pagesData).length > 0) {
+                            itemTranslation["pages"] = pagesData;
+                        }
                     }
 
-                    if (Object.keys(pagesData).length > 0) {
-                        itemTranslation["pages"] = pagesData;
-                    }
+                    entriesData[originalName] = itemTranslation;
                 }
-
-                entriesData[originalName] = itemTranslation;
             }
 
             // Créer le mapping
             const mapping = {};
 
-            // Ajouter description seulement si ce n'est pas un JournalEntry
-            if (pack.metadata.type !== "JournalEntry") {
-                mapping["description"] = "system.description";
+            // Pour les Adventures, structure de mapping spéciale
+            if (pack.metadata.type === "Adventure") {
+                mapping["actors"] = {};
+                mapping["items"] = {};
+            } else {
+                // Ajouter description seulement si ce n'est pas un JournalEntry
+                if (pack.metadata.type !== "JournalEntry") {
+                    mapping["description"] = "system.description";
+                }
             }
 
             for (const conf of config) {
-                mapping[conf.field] = {
-                    "path": conf.path,
-                    "converter": conf.converter
-                };
+                if (!conf.isItemAction) {
+                    mapping[conf.field] = {
+                        "path": conf.path,
+                        "converter": conf.converter
+                    };
+                }
             }
 
             const finalExport = {
@@ -379,8 +580,9 @@
             ui.notifications.info(`✅ Export JSON réussi : ${fileName} (${Object.keys(foldersData).length} dossiers exportés)`);
 
             // Générer le converter si nécessaire
-            if (config.length > 0) {
-                BabeleConverterExporter.generateConverter(config, itemType);
+            const convertersNeeded = config.filter(c => !c.isItemAction);
+            if (convertersNeeded.length > 0) {
+                BabeleConverterExporter.generateConverter(convertersNeeded, itemType);
             }
         }
 
