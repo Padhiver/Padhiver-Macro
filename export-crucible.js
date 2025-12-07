@@ -422,7 +422,12 @@
                                 }
                             }
 
-                            actorsData[actor.name] = actorTranslation;
+                            // CORRECTION : Fusion si l'acteur existe déjà
+                            if (actorsData[actor.name]) {
+                                foundry.utils.mergeObject(actorsData[actor.name], actorTranslation, { recursive: true });
+                            } else {
+                                actorsData[actor.name] = actorTranslation;
+                            }
                         }
                         adventureTranslation["actors"] = actorsData;
                     }
@@ -462,7 +467,12 @@
                         adventureTranslation["journals"] = journalsData;
                     }
 
-                    entriesData[doc.name] = adventureTranslation;
+                    // CORRECTION : Fusion si l'adventure existe déjà
+                    if (entriesData[doc.name]) {
+                        foundry.utils.mergeObject(entriesData[doc.name], adventureTranslation, { recursive: true });
+                    } else {
+                        entriesData[doc.name] = adventureTranslation;
+                    }
                 }
             }
             // ===================================================
@@ -477,7 +487,41 @@
                         "name": originalName
                     };
 
-                    // ... (logique existante pour description, etc.)
+// --- CORRECTION : Récupération de la description (Manquante dans l'export standard) ---
+                    const descriptionData = foundry.utils.getProperty(doc, "system.description");
+                    
+                    if (descriptionData) {
+                        let descriptionToExport = null;
+
+                        if (typeof descriptionData === 'string' && descriptionData.trim()) {
+                            // Cas 1: La description est une chaîne de caractères simple.
+                            descriptionToExport = descriptionData;
+                        } else if (typeof descriptionData === 'object' && descriptionData !== null) {
+                            // Cas 2: La description est un objet.
+
+                            // 2a. Cas le plus fréquent (ex: Description simple dans .value)
+                            if (typeof descriptionData.value === 'string' && descriptionData.value.trim()) {
+                                descriptionToExport = descriptionData.value;
+                            } 
+                            // 2b. Cas spécial (ex: PF2e - public/private)
+                            else {
+                                const descObj = {};
+                                if (descriptionData.public?.trim()) descObj.public = descriptionData.public;
+                                if (descriptionData.private?.trim()) descObj.private = descriptionData.private;
+
+                                if (Object.keys(descObj).length > 0) {
+                                    // S'il y a du public ET/OU du private, on exporte l'objet structuré
+                                    descriptionToExport = descObj;
+                                }
+                            }
+                        }
+
+                        // Ajout final à l'objet de traduction
+                        if (descriptionToExport) {
+                            itemTranslation["description"] = descriptionToExport;
+                        }
+                    }
+                    // --- FIN DE LA CORRECTION DESCRIPTION ---
 
                     // Traitement spécial pour les ACTORS : Ajout des items et de leurs actions
                     if (pack.metadata.type === "Actor" && doc.items?.size > 0) {
@@ -601,7 +645,12 @@
                         }
                     }
 
-                    entriesData[originalName] = itemTranslation;
+                    // CORRECTION : Fusion (Merge) pour éviter d'écraser les doublons (ex: Actor niv 1 et niv 6)
+                    if (entriesData[originalName]) {
+                        foundry.utils.mergeObject(entriesData[originalName], itemTranslation, { recursive: true });
+                    } else {
+                        entriesData[originalName] = itemTranslation;
+                    }
                 }
             }
 
