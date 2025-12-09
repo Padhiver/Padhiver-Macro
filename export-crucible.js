@@ -66,13 +66,67 @@
         ],
 
         "Actor": [
+            // Items
             {
-                field: "items", // Le champ principal sera "items" dans l'export
-                path: "items", // Non utilisé ici, mais présent pour la forme
-                converter: "adventure_items_converter", // Nous allons utiliser votre converter existant
-                subFields: ["name", "description", "actions"], // Champs principaux pour l'acteur
-                idKey: "id", // Pas vraiment nécessaire pour les acteurs eux-mêmes
-                isActorItem: true // Nouveau flag pour le traitement spécifique
+                field: "items",
+                path: "items",
+                converter: "adventure_items_converter",
+                subFields: ["name", "description", "actions"],
+                idKey: "id",
+                isActorItem: true
+            },
+            // Actions
+            {
+                field: "actions",
+                path: "system.actions",
+                converter: "actions_converter",
+                subFields: ["name", "description", "condition"],
+                idKey: "id"
+            },
+            // Ancestry
+            {
+                field: "ancestry",
+                path: "system.details.ancestry",
+                converter: "nested_object_converter",
+                subFields: ["name", "description"],
+                idKey: null,
+                isDirectObject: true
+            },
+            // Background
+            {
+                field: "background",
+                path: "system.details.background",
+                converter: "nested_object_converter",
+                subFields: ["name", "description"],
+                idKey: null,
+                isDirectObject: true
+            },
+            // Biography
+            {
+                field: "biography",
+                path: "system.details.biography",
+                converter: "nested_object_converter",
+                subFields: ["appearance", "public", "private"],
+                idKey: null,
+                isDirectObject: true
+            },
+            // Archetype
+            {
+                field: "archetype",
+                path: "system.details.archetype", // Chemin direct vers l'objet
+                converter: "nested_object_converter", // Utilise le converter pour objets complexes
+                subFields: ["name", "description"], // Champs internes à traduire
+                idKey: null,
+                isDirectObject: true
+            },
+            // Taxonomy
+            {
+                field: "taxonomy",
+                path: "system.details.taxonomy", // Chemin direct vers l'objet
+                converter: "nested_object_converter", // Utilise le converter pour objets complexes
+                subFields: ["name", "description"], // Champs internes à traduire
+                idKey: null,
+                isDirectObject: true
             }
         ],
 
@@ -346,11 +400,57 @@
                     // Actors (avec leurs items et actions)
                     if (doc.actors?.size > 0) {
                         const actorsData = {};
+                        const actorConfig = EXPORT_CONFIG["Actor"] || [];
+
                         for (const actor of doc.actors) {
                             const actorTranslation = {
                                 "name": actor.name,
                                 "tokenName": actor.prototypeToken?.name || actor.name
                             };
+
+                            // === UTILISATION DE EXPORT_CONFIG POUR LES STRUCTURES COMPLEXES ===
+                            for (const conf of actorConfig) {
+                                // Skip les items car traités séparément
+                                if (conf.field === "items") continue;
+
+                                const data = foundry.utils.getProperty(actor, conf.path);
+
+                                // CAS 1 : Objet direct (ancestry, background, biography, details)
+                                if (conf.isDirectObject && data && typeof data === 'object') {
+                                    const nestedObject = {};
+                                    for (const subField of conf.subFields) {
+                                        const value = data[subField];
+                                        if (value && typeof value === 'string' && value.trim() !== "") {
+                                            nestedObject[subField] = value;
+                                        }
+                                    }
+                                    if (Object.keys(nestedObject).length > 0) {
+                                        actorTranslation[conf.field] = nestedObject;
+                                    }
+                                }
+                                // CAS 2 : Array (actions directes de l'acteur)
+                                else if (Array.isArray(data) && data.length > 0 && !conf.isActorItem) {
+                                    const nestedObject = {};
+                                    for (const element of data) {
+                                        const id = element[conf.idKey || "id"];
+                                        if (!id) continue;
+
+                                        const elementTranslation = {};
+                                        for (const subField of conf.subFields) {
+                                            const value = foundry.utils.getProperty(element, subField);
+                                            if (value && typeof value === 'string' && value.trim() !== "") {
+                                                elementTranslation[subField] = value;
+                                            }
+                                        }
+                                        if (Object.keys(elementTranslation).length > 0) {
+                                            nestedObject[id] = elementTranslation;
+                                        }
+                                    }
+                                    if (Object.keys(nestedObject).length > 0) {
+                                        actorTranslation[conf.field] = nestedObject;
+                                    }
+                                }
+                            }
 
                             // Items de l'acteur
                             if (actor.items?.size > 0) {
@@ -422,7 +522,7 @@
                                 }
                             }
 
-                            // CORRECTION : Fusion si l'acteur existe déjà
+                            // CORRECTION : Fusion si l'acteur existe déjà 
                             if (actorsData[actor.name]) {
                                 foundry.utils.mergeObject(actorsData[actor.name], actorTranslation, { recursive: true });
                             } else {
@@ -467,7 +567,7 @@
                         adventureTranslation["journals"] = journalsData;
                     }
 
-                    // CORRECTION : Fusion si l'adventure existe déjà
+                    // CORRECTION : Fusion si l'adventure existe déjà 
                     if (entriesData[doc.name]) {
                         foundry.utils.mergeObject(entriesData[doc.name], adventureTranslation, { recursive: true });
                     } else {
@@ -487,9 +587,9 @@
                         "name": originalName
                     };
 
-// --- CORRECTION : Récupération de la description (Manquante dans l'export standard) ---
+                    // --- CORRECTION : Récupération de la description (Manquante dans l'export standard) ---
                     const descriptionData = foundry.utils.getProperty(doc, "system.description");
-                    
+
                     if (descriptionData) {
                         let descriptionToExport = null;
 
@@ -502,7 +602,7 @@
                             // 2a. Cas le plus fréquent (ex: Description simple dans .value)
                             if (typeof descriptionData.value === 'string' && descriptionData.value.trim()) {
                                 descriptionToExport = descriptionData.value;
-                            } 
+                            }
                             // 2b. Cas spécial (ex: PF2e - public/private)
                             else {
                                 const descObj = {};
@@ -595,13 +695,32 @@
                     // Traiter les structures complexes (actions, etc.) - LOGIQUE EXISTANTE
 
                     // ... (reste du traitement standard)
+                    // Traiter les structures complexes
                     for (const conf of config) {
-                        const array = foundry.utils.getProperty(docData, conf.path);
+                        const data = foundry.utils.getProperty(docData, conf.path);
 
-                        if (Array.isArray(array) && array.length > 0) {
+                        // CAS 1 : Objet direct (ancestry, background, biography, details)
+                        if (conf.isDirectObject) {
+                            if (data && typeof data === 'object') {
+                                const nestedObject = {};
+                                for (const subField of conf.subFields) {
+                                    const value = data[subField];
+                                    if (value && typeof value === 'string' && value.trim() !== "") {
+                                        nestedObject[subField] = value;
+                                    }
+                                }
+                                if (Object.keys(nestedObject).length > 0) {
+                                    itemTranslation[conf.field] = nestedObject;
+                                }
+                            }
+                            continue; // Skip le traitement array ci-dessous
+                        }
+
+                        // CAS 2 : Array (actions, etc.) - TON CODE EXISTANT
+                        if (Array.isArray(data) && data.length > 0) {
                             const nestedObject = {};
 
-                            for (const element of array) {
+                            for (const element of data) {
                                 const id = element[conf.idKey || "id"];
                                 if (!id) continue;
 
@@ -657,10 +776,25 @@
             // Créer le mapping
             const mapping = {};
 
-            // Pour les Adventures, structure de mapping spéciale
+            // Pour les Adventures, on doit déclarer les converters pour les structures complexes des actors
             if (pack.metadata.type === "Adventure") {
                 mapping["actors"] = {};
+
+                // Ajouter tous les converters depuis EXPORT_CONFIG["Actor"]
+                const actorConfig = EXPORT_CONFIG["Actor"] || [];
+                for (const conf of actorConfig) {
+                    if (conf.converter) {
+                        mapping["actors"][conf.field] = {
+                            "path": conf.path,
+                            "converter": conf.converter
+                        };
+                    }
+                }
+
                 mapping["items"] = {};
+                mapping["journals"] = {};
+                mapping["scenes"] = {};
+                mapping["macros"] = {};
             }
             // Ajout du mapping pour les acteurs
             else if (pack.metadata.type === "Actor") {
@@ -677,7 +811,7 @@
             }
 
             for (const conf of config) {
-                if (!conf.isItemAction) {
+                if (!conf.isItemAction && !conf.isActorItem) {
                     mapping[conf.field] = {
                         "path": conf.path,
                         "converter": conf.converter
